@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport"
+      content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Fotball 2v2 2027</title>
+
+<style>
+*{
+  box-sizing:border-box;
+  margin:0;
+  padding:0;
+  touch-action:none;
+}
+
+html,body{
+  width:100%;
+  height:100%;
+  overflow:hidden;
+  background:#071008;
+  font-family:Arial,sans-serif;
+}
+
+#game{
+  position:fixed;
+  inset:0;
+  width:100%;
+  height:100%;
+  background:#123b18;
+}
+
+canvas{
+  width:100%;
+  height:100%;
+  display:block;
+}
+
+#score{
+  position:fixed;
+  top:12px;
+  left:50%;
+  transform:translateX(-50%);
+  color:white;
+  background:rgba(0,0,0,.45);
+  border:1px solid rgba(255,255,255,.25);
+  border-radius:12px;
+  padding:7px 20px;
+  font-size:20px;
+  font-weight:bold;
+  z-index:5;
+}
+
+#controls{
+  position:fixed;
+  inset:0;
+  pointer-events:none;
+}
+
+#joystick{
+  position:absolute;
+  left:35px;
+  bottom:30px;
+  width:125px;
+  height:125px;
+  border-radius:50%;
+  background:rgba(255,255,255,.12);
+  border:3px solid rgba(190,190,190,.8);
+  pointer-events:auto;
+}
+
+#stick{
+  position:absolute;
+  width:52px;
+  height:52px;
+  left:50%;
+  top:50%;
+  transform:translate(-50%,-50%);
+  border-radius:50%;
+  background:rgba(220,220,220,.8);
+  border:3px solid #888;
+}
+
+.buttons{
+  position:absolute;
+  right:30px;
+  bottom:30px;
+  display:flex;
+  gap:12px;
+  pointer-events:auto;
+}
+
+.btn{
+  width:70px;
+  height:70px;
+  border-radius:50%;
+  border:2px solid rgba(255,255,255,.45);
+  background:rgba(255,255,255,.14);
+  color:white;
+  font-size:13px;
+  font-weight:bold;
+}
+
+.btn:active{
+  background:rgba(255,255,255,.3);
+}
+
+#power{
+  position:absolute;
+  right:120px;
+  bottom:110px;
+  width:120px;
+  height:10px;
+  border-radius:10px;
+  background:rgba(255,255,255,.18);
+  overflow:hidden;
+  display:none;
+}
+
+#powerBar{
+  width:0%;
+  height:100%;
+  background:#fff;
+}
+
+#message{
+  position:fixed;
+  left:50%;
+  top:50%;
+  transform:translate(-50%,-50%);
+  color:white;
+  text-align:center;
+  font-size:32px;
+  font-weight:bold;
+  display:none;
+  z-index:20;
+  text-shadow:0 3px 8px #000;
+}
+
+#restart{
+  margin-top:20px;
+  padding:12px 25px;
+  border:0;
+  border-radius:10px;
+  font-weight:bold;
+  font-size:18px;
+}
+</style>
+</head>
+
+<body>
+
+<canvas id="game"></canvas>
+
+<div id="score">AZUL 0 × 0 VERMELHO</div>
+
+<div id="controls">
+
+  <div id="joystick">
+    <div id="stick"></div>
+  </div>
+
+  <div class="buttons">
+    <button class="btn" id="pass">PASSE</button>
+    <button class="btn" id="shoot">CHUTE</button>
+    <button class="btn" id="swap">TROCAR</button>
+  </div>
+
+  <div id="power">
+    <div id="powerBar"></div>
+  </div>
+
+</div>
+
+<div id="message">
+  <div id="winner"></div>
+  <button id="restart">JOGAR NOVAMENTE</button>
+</div>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+const scoreEl = document.getElementById("score");
+const joystick = document.getElementById("joystick");
+const stick = document.getElementById("stick");
+const shootBtn = document.getElementById("shoot");
+const passBtn = document.getElementById("pass");
+const swapBtn = document.getElementById("swap");
+const power = document.getElementById("power");
+const powerBar = document.getElementById("powerBar");
+
+let W,H;
+let running=true;
+let selected=0;
+let charging=false;
+let charge=0;
+
+const field={
+  x:0,
+  y:0,
+  w:0,
+  h:0
+};
+
+const ball={
+  x:0,
+  y:0,
+  vx:0,
+  vy:0,
+  r:11
+};
+
+const players=[
+  {
+    team:0,
+    role:"attacker",
+    x:0,y:0,
+    color:"#1976ff"
+  },
+  {
+    team:0,
+    role:"keeper",
+    x:0,y:0,
+    color:"#51a0ff"
+  },
+  {
+    team:1,
+    role:"attacker",
+    x:0,y:0,
+    color:"#e53935"
+  },
+  {
+    team:1,
+    role:"keeper",
+    x:0,y:0,
+    color:"#ff7777"
+  }
+];
+
+let goals=[0,0];
+
+let joy={
+  x:0,
+  y:0,
+  active:false
+};
+
+function resize(){
+  W=canvas.width=window.innerWidth;
+  H=canvas.height=window.innerHeight;
+
+  field.w=Math.min(W*.88,1100);
+  field.h=Math.min(H*.72,560);
+
+  field.x=(W-field.w)/2;
+  field.y=(H-field.h)/2;
+
+  resetPositions();
+}
+
+function resetPositions(){
+  players[0].x=field.x+field.w*.25;
+  players[0].y=field.y+field.h*.5;
+
+  players[1].x=field.x+field.w*.06;
+  players[1].y=field.y+field.h*.5;
+
+  players[2].x=field.x+field.w*.75;
+  players[2].y=field.y+field.h*.5;
+
+  players[3].x=field.x+field.w*.94;
+  players[3].y=field.y+field.h*.5;
+
+  ball.x=field.x+field.w/2;
+  ball.y=field.y+field.h/2;
+  ball.vx=0;
+  ball.vy=0;
+}
+
+window.addEventListener("resize",resize);
+
+function drawField(){
+  ctx.fillStyle="#14551d";
+  ctx.fillRect(0,0,W,H);
+
+  ctx.fillStyle="#23852c";
+  ctx.fillRect(field.x,field.y,field.w,field.h);
+
+  ctx.strokeStyle="rgba(255,255,255,.9)";
+  ctx.lineWidth=4;
+
+  ctx.strokeRect(
+    field.x,
+    field.y,
+    field.w,
+    field.h
+  );
+
+  ctx.beginPath();
+  ctx.moveTo(
+    field.x+field.w/2,
+    field.y
+  );
+  ctx.lineTo(
+    field.x+field.w/2,
+    field.y+field.h
+  );
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(
+    field.x+field.w/2,
+    field.y+field.h/2,
+    field.h*.16,
+    0,
+    Math.PI*2
+  );
+  ctx.stroke();
+
+  // áreas
+  ctx.strokeRect(
+    field.x,
+    field.y+field.h*.30,
+    field.w*.13,
+    field.h*.40
+  );
+
+  ctx.strokeRect(
+    field.x+field.w*.87,
+    field.y+field.h*.30,
+    field.w*.13,
+    field.h*.40
+  );
+
+  // gols
+  ctx.fillStyle="#ddd";
+
+  ctx.fillRect(
+    field.x-18,
+    field.y+field.h*.39,
+    18,
+    field.h*.22
+  );
+
+  ctx.fillRect(
+    field.x+field.w,
+    field.y+field.h*.39,
+    18,
+    field.h*.22
+  );
+}
+
+function drawPlayer(p,i){
+  ctx.beginPath();
+
+  ctx.fillStyle=p.color;
+
+  ctx.arc(
+    p.x,
+    p.y,
+    p.role==="keeper"?19:17,
+    0,
+    Math.PI*2
+  );
+
+  ctx.fill();
+
+  ctx.strokeStyle="rgba(255,255,255,.8)";
+  ctx.lineWidth=2;
+  ctx.stroke();
+
+  if(i===selected){
+    ctx.beginPath();
+    ctx.strokeStyle="#fff";
+    ctx.lineWidth=3;
+    ctx.arc(
+      p.x,
+      p.y,
+      25,
+      0,
+      Math.PI*2
+    );
+    ctx.stroke();
+  }
+}
+
+function drawBall(){
+  ctx.beginPath();
+  ctx.fillStyle="#fff";
+  ctx.arc(ball.x,ball.y,ball.r,0,Math.PI*2);
+  ctx.fill();
+
+  ctx.strokeStyle="#222";
+  ctx.lineWidth=2;
+  ctx.stroke();
+}
+
+function updateScore(){
+  scoreEl.textContent=
+    `AZUL ${goals[0]} × ${goals[1]} VERMELHO`;
+}
+
+function distance(a,b){
+  return Math.hypot(
+    a.x-b.x,
+    a.y-b.y
+  );
+}
+
+function movePlayer(p,dx,dy){
+  const speed=3.2;
+
+  p.x+=dx*speed;
+  p.y+=dy*speed;
+
+  p.x=Math.max(
+    field.x+20,
+    Math.min(field.x+field.w-20,p.x)
+  );
+
+  p.y=Math.max(
+    field.y+20,
+    Math.min(field.y+field.h-20,p.y)
+  );
+
+  // ninguém atravessa a área interna do gol
+  if(p.x<field.x+10)
+    p.x=field.x+20;
+
+  if(p.x>field.x+field.w-10)
+    p.x=field.x+field.w-20;
+}
+
+function kick(powerValue){
+  const p=players[selected];
+
+  const dx=joy.x;
+  const dy=joy.y;
+
+  let ax=dx;
+  let ay=dy;
+
+  if(Math.hypot(ax,ay)<.1){
+    ax=p.team===0?1:-1;
+    ay=0;
+  }
+
+  const len=Math.hypot(ax,ay)||1;
+
+  ball.x=p.x+ax*25;
+  ball.y=p.y+ay*25;
+
+  ball.vx=ax/len*(7+powerValue*9);
+  ball.vy=ay/len*(7+powerValue*9);
+}
+
+function pass(){
+  const p=players[selected];
+
+  let teammate;
+
+  if(p.team===0){
+    teammate=selected===0?players[1]:players[0];
+  }else{
+    teammate=selected===2?players[3]:players[2];
+  }
+
+  const dx=teammate.x-ball.x;
+  const dy=teammate.y-ball.y;
+  const len=Math.hypot(dx,dy)||1;
+
+  ball.x=p.x;
+  ball.y=p.y;
+
+  ball.vx=dx/len*8;
+  ball.vy=dy/len*8;
+}
+
+function swap(){
+  if(selected===0) selected=1;
+  else if(selected===1) selected=0;
+  else if(selected===2) selected=3;
+  else selected=2;
+}
+
+function ai(){
+  const target=players[2];
+
+  // atacante vermelho acompanha a bola
+  const p=players[2];
+
+  let dx=ball.x-p.x;
+  let dy=ball.y-p.y;
+  let len=Math.hypot(dx,dy)||1;
+
+  movePlayer(
+    p,
+    dx/len*.7,
+    dy/len*.7
+  );
+
+  // goleiro vermelho fica limitado à sua área
+  const k=players[3];
+
+  k.y+=(ball.y-k.y)*.02;
+
+  k.y=Math.max(
+    field.y+field.h*.32,
+    Math.min(field.y+field.h*.68,k.y)
+  );
+
+  k.x=field.x+field.w*.94;
+
+  // se estiver perto da bola, devolve
+  if(distance(k,ball)<35){
+    ball.vx=-7;
+    ball.vy=(ball.y-field.y-field.h/2)*.04;
+  }
+}
+
+function updateBall(){
+  ball.x+=ball.vx;
+  ball.y+=ball.vy;
+
+  ball.vx*=.985;
+  ball.vy*=.985;
+
+  // laterais
+  if(
+    ball.y-ball.r<field.y ||
+    ball.y+ball.r>field.y+field.h
+  ){
+    ball.vy*=-.8;
+    ball.y=Math.max(
+      field.y+ball.r,
+      Math.min(field.y+field.h-ball.r,ball.y)
+    );
+  }
+
+  // gol esquerdo
+  if(
+    ball.x<field.x &&
+    ball.y>field.y+field.h*.39 &&
+    ball.y<field.y+field.h*.61
+  ){
+    goals[1]++;
+    goal(1);
+    return;
+  }
+
+  // gol direito
+  if(
+    ball.x>field.x+field.w &&
+    ball.y>field.y+field.h*.39 &&
+    ball.y<field.y+field.h*.61
+  ){
+    goals[0]++;
+    goal(0);
+    return;
+  }
+
+  // paredes invisíveis dos gols
+  if(ball.x<field.x+5){
+    ball.x=field.x+5;
+    ball.vx=Math.abs(ball.vx)*.8;
+  }
+
+  if(ball.x>field.x+field.w-5){
+    ball.x=field.x+field.w-5;
+    ball.vx=-Math.abs(ball.vx)*.8;
+  }
+
+  // colisões
+  players.forEach(p=>{
+    const d=distance(p,ball);
+
+    if(d<p.role==="keeper"?29:27){
+      const dx=ball.x-p.x;
+      const dy=ball.y-p.y;
+      const len=Math.hypot(dx,dy)||1;
+
+      if(p.role==="keeper"){
+        ball.vx=dx/len*6;
+        ball.vy=dy/len*6;
+      }else{
+        ball.vx=dx/len*3;
+        ball.vy=dy/len*3;
+      }
+    }
+  });
+}
+
+function goal(team){
+  updateScore();
+
+  if(goals[team]>=5){
+    running=false;
+
+    document.getElementById("message").style.display="block";
+
+    document.getElementById("winner").textContent=
+      team===0
+      ?"AZUL VENCEU!"
+      :"VERMELHO VENCEU!";
+
+    return;
+  }
+
+  setTimeout(()=>{
+    resetPositions();
+  },1000);
+}
+
+function loop(){
+  if(!running) return;
+
+  ctx.clearRect(0,0,W,H);
+
+  drawField();
+
+  if(joy.active){
+    const p=players[selected];
+
+    movePlayer(
+      p,
+      joy.x,
+      joy.y
+    );
+  }
+
+  ai();
+  updateBall();
+
+  players.forEach(drawPlayer);
+
+  drawBall();
+
+  requestAnimationFrame(loop);
+}
+
+/* JOYSTICK */
+
+function joystickMove(e){
+  const r=joystick.getBoundingClientRect();
+
+  const cx=r.left+r.width/2;
+  const cy=r.top+r.height/2;
+
+  let dx=e.clientX-cx;
+  let dy=e.clientY-cy;
+
+  const max=43;
+
+  const len=Math.hypot(dx,dy);
+
+  if(len>max){
+    dx=dx/len*max;
+    dy=dy/len*max;
+  }
+
+  stick.style.left=
+    `calc(50% + ${dx}px)`;
+
+  stick.style.top=
+    `calc(50% + ${dy}px)`;
+
+  joy.x=dx/max;
+  joy.y=dy/max;
+}
+
+joystick.addEventListener("pointerdown",e=>{
+  joy.active=true;
+  joystickMove(e);
+});
+
+window.addEventListener("pointermove",e=>{
+  if(joy.active)
+    joystickMove(e);
+});
+
+window.addEventListener("pointerup",()=>{
+  joy.active=false;
+
+  stick.style.left="50%";
+  stick.style.top="50%";
+
+  joy.x=0;
+  joy.y=0;
+});
+
+/* CHUTE */
+
+shootBtn.addEventListener("pointerdown",()=>{
+  charging=true;
+  charge=0;
+  power.style.display="block";
+});
+
+window.addEventListener("pointerup",()=>{
+  if(!charging) return;
+
+  charging=false;
+
+  kick(charge);
+
+  power.style.display="none";
+  powerBar.style.width="0%";
+});
+
+function chargeLoop(){
+  if(charging){
+    charge+=.018;
+
+    if(charge>1)
+      charge=0;
+
+    powerBar.style.width=
+      `${charge*100}%`;
+  }
+
+  requestAnimationFrame(chargeLoop);
+}
+
+/* PASSE */
+
+passBtn.addEventListener("pointerdown",pass);
+
+/* TROCAR */
+
+swapBtn.addEventListener("pointerdown",swap);
+
+/* RESTART */
+
+document.getElementById("restart").onclick=()=>{
+  goals=[0,0];
+  running=true;
+
+  document.getElementById("message").style.display="none";
+
+  resetPositions();
+  updateScore();
+  loop();
+};
+
+resize();
+updateScore();
+loop();
+chargeLoop();
+
+</script>
+
+</body>
+  </html>
